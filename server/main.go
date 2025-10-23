@@ -2,13 +2,13 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"html/template"
 	"log"
 	"net/http"
 	"os"
 
 	"github.com/coreos/go-oidc"
+	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v4"
 	"github.com/joho/godotenv"
 	"golang.org/x/oauth2"
@@ -28,7 +28,7 @@ var (
 	oauth2Config oauth2.Config
 )
 
-func handleHome(w http.ResponseWriter, r *http.Request) {
+func handleHome(c *gin.Context) {
 	html := `
         <html>
         <body>
@@ -36,23 +36,23 @@ func handleHome(w http.ResponseWriter, r *http.Request) {
             <a href="/login">Login with Cognito</a>
         </body>
         </html>`
-	fmt.Fprint(w, html)
+	c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(html))
 }
 
-func handleLogin(writer http.ResponseWriter, request *http.Request) {
+func handleLogin(c *gin.Context) {
 	state := "state" // Replace with a secure random string in production
 	url := oauth2Config.AuthCodeURL(state, oauth2.AccessTypeOffline)
-	http.Redirect(writer, request, url, http.StatusFound)
+	c.Redirect(http.StatusFound, url)
 }
 
-func handleCallback(writer http.ResponseWriter, request *http.Request) {
+func handleCallback(c *gin.Context) {
 	ctx := context.Background()
-	code := request.URL.Query().Get("code")
+	code := c.Query("code")
 
 	// Exchange the authorization code for a token
 	rawToken, err := oauth2Config.Exchange(ctx, code)
 	if err != nil {
-		http.Error(writer, "Failed to exchange token: "+err.Error(), http.StatusInternalServerError)
+		c.String(http.StatusInternalServerError, "Failed to exchange token: "+err.Error())
 		return
 	}
 	tokenString := rawToken.AccessToken
@@ -60,47 +60,27 @@ func handleCallback(writer http.ResponseWriter, request *http.Request) {
 	// Parse the token (do signature verification for your use case in production)
 	token, _, err := new(jwt.Parser).ParseUnverified(tokenString, jwt.MapClaims{})
 	if err != nil {
-		fmt.Printf("Error parsing token: %v\n", err)
+		c.String(http.StatusInternalServerError, "Error parsing token: "+err.Error())
 		return
 	}
 
 	// Check if the token is valid and extract claims
 	claims, ok := token.Claims.(jwt.MapClaims)
 	if !ok {
-		http.Error(writer, "Invalid claims", http.StatusBadRequest)
+		c.String(http.StatusBadRequest, "Invalid claims")
 		return
 	}
 
-	// Prepare data for rendering the template
-	pageData := ClaimsPage{
-		AccessToken: tokenString,
-		Claims:      claims,
-	}
-
-	// Define the HTML template
-	tmpl := `
-    <html>
-        <body>
-            <h1>User Information</h1>
-            <h1>JWT Claims</h1>
-            <p><strong>Access Token:</strong> {{.AccessToken}}</p>
-            <ul>
-                {{range $key, $value := .Claims}}
-                    <li><strong>{{$key}}:</strong> {{$value}}</li>
-                {{end}}
-            </ul>
-            <a href="/logout">Logout</a>
-        </body>
-    </html>`
-
-	// Parse and execute the template
-	t := template.Must(template.New("claims").Parse(tmpl))
-	t.Execute(writer, pageData)
+	// Render HTML template
+	c.HTML(http.StatusOK, "claims.html", gin.H{
+		"AccessToken": tokenString,
+		"Claims":      claims,
+	})
 }
 
-func handleLogout(writer http.ResponseWriter, request *http.Request) {
+func handleLogout(c *gin.Context) {
 	// Here, you would clear the session or cookie if stored.
-	http.Redirect(writer, request, "/", http.StatusFound)
+	c.Redirect(http.StatusFound, "/")
 }
 
 func init() {
@@ -133,11 +113,35 @@ func init() {
 }
 
 func main() {
-	http.HandleFunc("/", handleHome)
-	http.HandleFunc("/login", handleLogin)
-	http.HandleFunc("/logout", handleLogout)
-	http.HandleFunc("/callback", handleCallback)
+	r := gin.Default()
 
-	fmt.Println("Server is running on http://localhost:8080")
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	// Load HTML templates
+	r.SetHTMLTemplate(claimsTemplate())
+
+	// Routes
+	r.GET("/", handleHome)
+	r.GET("/login", handleLogin)
+	r.GET("/logout", handleLogout)
+	r.GET("/callback", handleCallback)
+
+	log.Println("Server is running on http://localhost:8080")
+	r.Run(":8080")
+}
+
+func claimsTemplate() *template.Template {
+	tmpl := `
+    <html>
+        <body>
+            <h1>User Information</h1>
+            <h1>JWT Claims</h1>
+            <p><strong>Access Token:</strong> {{.AccessToken}}</p>
+            <ul>
+                {{range $key, $value := .Claims}}
+                    <li><strong>{{$key}}:</strong> {{$value}}</li>
+                {{end}}
+            </ul>
+            <a href="/logout">Logout</a>
+        </body>
+    </html>`
+	return template.Must(template.New("claims.html").Parse(tmpl))
 }
