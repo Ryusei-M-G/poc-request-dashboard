@@ -1,7 +1,7 @@
 
 const Home = () => {
-  const clickHandle = async () => {
-    await fetch('http://localhost:8080/login')
+  const clickHandle = () => {
+    window.location.href = 'http://localhost:8080/login'
   }
   return (
     <div
